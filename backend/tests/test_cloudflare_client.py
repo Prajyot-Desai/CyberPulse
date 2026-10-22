@@ -127,3 +127,36 @@ async def test_client_failure_envelope(mock_configured_settings: Settings) -> No
         await client.get_layer3_timeseries()
     assert "Cloudflare returned failure envelope" in str(exc_info.value)
     await client.close()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_client_get_layer3_summary_protocol_endpoint(
+    mock_configured_settings: Settings,
+) -> None:
+    """Verify get_layer3_summary_protocol targets the documented /summary/PROTOCOL endpoint."""
+    route = respx.get(
+        "https://api.cloudflare.com/client/v4/radar/attacks/layer3/summary/PROTOCOL"
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "success": True,
+                "errors": [],
+                "messages": [],
+                "result": {
+                    "summary_0": {"UDP": "65.0", "TCP": "30.0"},
+                    "meta": {},
+                },
+            },
+        )
+    )
+
+    client = CloudflareRadarClient(settings=mock_configured_settings)
+    data = await client.get_layer3_summary_protocol(date_range="7d")
+
+    assert data["success"] is True
+    assert route.called
+    assert route.calls.last.request.url.params["dateRange"] == "7d"
+    assert route.calls.last.request.url.params["format"] == "json"
+    await client.close()

@@ -230,9 +230,9 @@ class CloudflareRadarClient:
     async def get_layer3_summary_protocol(
         self, date_range: str = "7d"
     ) -> Dict[str, Any]:
-        """Fetch Layer 3 attack breakdown by protocol (TCP, UDP, ICMP, GRE, etc.)."""
+        """Fetch Layer 3 attack breakdown by protocol (TCP, UDP, ICMP, GRE, etc.) using documented dimension endpoint."""
         return await self._request(
             "GET",
-            "attacks/layer3/summary/protocol",
+            "attacks/layer3/summary/PROTOCOL",
             params={"dateRange": date_range},
         )

@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from enum import Enum
+import math
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -52,27 +53,66 @@ class RawTopLocationItem(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    # Documented Cloudflare target fields
+    targetCountryAlpha2: Optional[str] = None
+    targetCountryName: Optional[str] = None
+
+    # Documented Cloudflare origin fields & aliases
+    originCountryAlpha2: Optional[str] = None
+    originCountryName: Optional[str] = None
     clientCountryAlpha2: Optional[str] = None
     clientCountryName: Optional[str] = None
+    clientISOAlpha2: Optional[str] = None
     countryAlpha2: Optional[str] = None
     countryName: Optional[str] = None
+
+    # Quantitative value (percentage proportion) and ranking
     value: Union[str, float, int] = 0.0
+    rank: Optional[Union[int, str]] = None
 
     @property
     def resolved_code(self) -> str:
-        """Resolve alpha2 country code from clientCountryAlpha2 or countryAlpha2."""
-        return self.clientCountryAlpha2 or self.countryAlpha2 or "XX"
+        """Resolve alpha2 country code from target, origin, or generic country code fields."""
+        for candidate in (
+            self.targetCountryAlpha2,
+            self.originCountryAlpha2,
+            self.clientCountryAlpha2,
+            self.clientISOAlpha2,
+            self.countryAlpha2,
+        ):
+            if candidate and isinstance(candidate, str) and candidate.strip():
+                return candidate.strip().upper()
+        return "XX"
 
     @property
     def resolved_name(self) -> str:
-        """Resolve country name."""
-        return self.clientCountryName or self.countryName or "Unknown"
+        """Resolve full country name from target, origin, or generic country name fields."""
+        for candidate in (
+            self.targetCountryName,
+            self.originCountryName,
+            self.clientCountryName,
+            self.countryName,
+        ):
+            if candidate and isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return "Unknown"
+
+    @property
+    def resolved_rank(self) -> Optional[int]:
+        """Resolve ranking position as an integer if present."""
+        if self.rank is None:
+            return None
+        try:
+            return int(self.rank)
+        except (ValueError, TypeError):
+            return None
 
     @property
     def numeric_value(self) -> float:
         """Convert string or int percentage value to a safe float."""
         try:
-            return float(self.value)
+            val = float(self.value)
+            return val if math.isfinite(val) else 0.0
         except (ValueError, TypeError):
             return 0.0
 
@@ -83,6 +123,7 @@ class RawTopLocationsResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     top_0: List[RawTopLocationItem] = Field(default_factory=list)
+    top0: List[RawTopLocationItem] = Field(default_factory=list)
     meta: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -102,6 +143,7 @@ class LocationMetric(BaseModel):
     country_code: str = Field(description="ISO-3166-1 alpha-2 country code")
     country_name: str = Field(description="Full country or territory name")
     percentage: float = Field(description="Proportion of total attacks (0.0 - 100.0)")
+    rank: Optional[int] = Field(default=None, description="Ranking position if available")
 
 
 class ProtocolMetric(BaseModel):

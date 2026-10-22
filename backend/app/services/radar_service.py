@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, timezone
+import math
 from typing import Any, Dict, List, Optional
 from app.clients.cloudflare import (
     CloudflareAuthError,
@@ -80,7 +81,7 @@ class RadarService:
 
     @staticmethod
     def _normalize_locations(raw: Optional[Dict[str, Any]]) -> List[LocationMetric]:
-        """Extract top country metrics from top_0 arrays."""
+        """Extract top country metrics from top_0 arrays with defensive top0 compatibility."""
         if not raw or not isinstance(raw, dict):
             return []
 
@@ -88,27 +89,43 @@ class RadarService:
         if not isinstance(result, dict):
             return []
 
-        top_list = result.get("top_0", [])
+        # Official Cloudflare Radar responses wrap items in top_0; defensively support top0
+        top_list = result.get("top_0")
+        if top_list is None:
+            top_list = result.get("top0", [])
+
         if not isinstance(top_list, list):
             return []
 
         locations: List[LocationMetric] = []
         for item in top_list:
-            if isinstance(item, dict):
+            if isinstance(item, RawTopLocationItem):
+                raw_item = item
+            elif isinstance(item, dict):
                 raw_item = RawTopLocationItem(**item)
-                locations.append(
-                    LocationMetric(
-                        country_code=raw_item.resolved_code,
-                        country_name=raw_item.resolved_name,
-                        percentage=round(raw_item.numeric_value, 2),
-                    )
+            else:
+                continue
+
+            locations.append(
+                LocationMetric(
+                    country_code=raw_item.resolved_code,
+                    country_name=raw_item.resolved_name,
+                    percentage=round(raw_item.numeric_value, 2),
+                    rank=raw_item.resolved_rank,
                 )
+            )
 
         return locations
 
     @staticmethod
     def _normalize_protocols(raw: Optional[Dict[str, Any]]) -> List[ProtocolMetric]:
-        """Convert protocol summary distribution into standardized ProtocolMetrics."""
+        """Convert protocol summary distribution into standardized ProtocolMetrics.
+
+        Supports the documented Cloudflare Radar dictionary structure under result.summary_0
+        (e.g., {"UDP": "65.0", "TCP": "30.0"}) as well as legacy list representations.
+        Excludes metadata ('meta', 'units') and non-protocol attributes.
+        Preserves percentage semantics (values are proportions 0.0 - 100.0, not raw packet counts).
+        """
         if not raw or not isinstance(raw, dict):
             return []
 
@@ -118,26 +135,65 @@ class RadarService:
 
         protocols: List[ProtocolMetric] = []
 
-        # Check if result is a list or dictionary of protocols
-        items = result.get("protocol") or result.get("summary_0") or []
+        # 1. Official Cloudflare Radar summary dimension format: result.summary_0 as dict
+        summary_data = result.get("summary_0")
+        if summary_data is None:
+            summary_data = result.get("summary0")
+
+        if isinstance(summary_data, dict):
+            for proto_name, raw_val in summary_data.items():
+                if str(proto_name).lower() in ("meta", "units"):
+                    continue
+                try:
+                    num_val = float(raw_val) if raw_val is not None else 0.0
+                    if not math.isfinite(num_val):
+                        continue
+                    protocols.append(
+                        ProtocolMetric(
+                            protocol=str(proto_name).strip().upper(),
+                            percentage=round(num_val, 2),
+                        )
+                    )
+                except (ValueError, TypeError):
+                    continue
+            return protocols
+
+        # 2. Check if summary_data or result has a list representation
+        items = summary_data if isinstance(summary_data, list) else result.get("protocol")
         if isinstance(items, list):
             for item in items:
                 if isinstance(item, dict):
-                    name = item.get("metric") or item.get("protocol") or "UNKNOWN"
+                    name = item.get("metric") or item.get("protocol") or item.get("name")
+                    if not name or str(name).lower() in ("meta", "units"):
+                        continue
                     raw_val = item.get("value", 0.0)
                     try:
-                        val = float(raw_val)
+                        num_val = float(raw_val) if raw_val is not None else 0.0
                     except (ValueError, TypeError):
-                        val = 0.0
-                    protocols.append(ProtocolMetric(protocol=str(name).upper(), percentage=round(val, 2)))
-        elif isinstance(result, dict):
-            for key, val in result.items():
-                if key != "meta" and isinstance(val, (int, float, str)):
-                    try:
-                        num_val = float(val)
-                        protocols.append(ProtocolMetric(protocol=key.upper(), percentage=round(num_val, 2)))
-                    except (ValueError, TypeError):
-                        continue
+                        num_val = 0.0
+                    protocols.append(
+                        ProtocolMetric(
+                            protocol=str(name).strip().upper(),
+                            percentage=round(num_val, 2),
+                        )
+                    )
+            return protocols
+
+        # 3. Direct dictionary key-values under result (excluding metadata)
+        for key, val in result.items():
+            if key.lower() not in ("meta", "units", "summary_0", "summary0") and isinstance(
+                val, (int, float, str)
+            ):
+                try:
+                    num_val = float(val)
+                    protocols.append(
+                        ProtocolMetric(
+                            protocol=str(key).strip().upper(),
+                            percentage=round(num_val, 2),
+                        )
+                    )
+                except (ValueError, TypeError):
+                    continue
 
         return protocols
 

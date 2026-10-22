@@ -12,6 +12,9 @@ import { ProtocolChart } from './components/charts/ProtocolChart';
 import { DataSourcePanel } from './components/dashboard/DataSourcePanel';
 import { GlassCard } from './components/common/GlassCard';
 import { Badge } from './components/common/Badge';
+import { HistoricalSummaryCards } from './components/analytics/HistoricalSummaryCards';
+import { UtcDiurnalChart } from './components/analytics/UtcDiurnalChart';
+import { SpikeCandidatesPanel } from './components/analytics/SpikeCandidatesPanel';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('overview');
@@ -153,24 +156,26 @@ export const App: React.FC = () => {
       {/* TAB: ATTACK ANALYTICS */}
       {activeTab === 'analytics' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <HistoricalSummaryCards
+            layer3Data={overview?.metrics?.layer3_timeseries}
+            layer7Data={overview?.metrics?.layer7_timeseries}
+            observationWindow={observationWindow}
+          />
           <TimeseriesChart
             layer3Data={overview?.metrics?.layer3_timeseries}
             layer7Data={overview?.metrics?.layer7_timeseries}
             observationWindow={observationWindow}
           />
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
-              gap: '20px',
-            }}
-          >
-            <CountriesChart
-              targetCountries={overview?.metrics?.top_target_countries}
-              originCountries={overview?.metrics?.top_origin_countries}
-            />
-            <ProtocolChart protocols={overview?.metrics?.protocols} />
-          </div>
+          <UtcDiurnalChart
+            layer3Data={overview?.metrics?.layer3_timeseries}
+            layer7Data={overview?.metrics?.layer7_timeseries}
+            observationWindow={observationWindow}
+          />
+          <SpikeCandidatesPanel
+            layer3Data={overview?.metrics?.layer3_timeseries}
+            layer7Data={overview?.metrics?.layer7_timeseries}
+            observationWindow={observationWindow}
+          />
         </div>
       )}
 

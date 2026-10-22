@@ -1,0 +1,19 @@
+# ==============================================================================
+# CyberPulse — Backend Dependencies (Python 3.12)
+# ==============================================================================
+
+# Core Web Framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# Settings & Schema Validation
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# Asynchronous HTTP Client
+httpx==0.28.1
+
+# Testing & Mocking
+pytest==8.3.4
+pytest-asyncio==0.25.1
+respx==0.22.0

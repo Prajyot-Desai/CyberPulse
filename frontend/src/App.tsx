@@ -102,8 +102,11 @@ export const App: React.FC = () => {
             observationWindow={observationWindow}
           />
 
-          {/* 3D Globe Visualizer Placeholder */}
-          <GlobePlaceholder observationWindow={observationWindow} />
+          {/* 3D Globe Visualizer */}
+          <GlobePlaceholder
+            observationWindow={observationWindow}
+            metrics={overview?.metrics}
+          />
 
           {/* Analytics Grid: Timeseries and Breakdowns */}
           <div
@@ -142,7 +145,10 @@ export const App: React.FC = () => {
       {/* TAB: GLOBAL THREATS (Coming in M4) */}
       {activeTab === 'threats' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <GlobePlaceholder observationWindow={observationWindow} />
+          <GlobePlaceholder
+            observationWindow={observationWindow}
+            metrics={overview?.metrics}
+          />
           <GlassCard
             title="Geospatial Threat Engine Status"
             subtitle="Milestone 4 implementation roadmap"

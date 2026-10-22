@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { RefreshCw, Menu, Clock } from 'lucide-react';
 import { Badge } from '../common/Badge';
 import { Button } from '../common/Button';
@@ -78,8 +78,17 @@ export const Header: React.FC<HeaderProps> = ({
     return <Badge variant="neutral">READY</Badge>;
   };
 
-  const formatLastSync = (date: Date | null) => {
-    if (!date) return 'Not yet synced';
+  const [currentTime, setCurrentTime] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatClockTime = (date: Date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
 
@@ -187,7 +196,7 @@ export const Header: React.FC<HeaderProps> = ({
           })}
         </div>
 
-        {/* Last refreshed status */}
+        {/* Live clock display */}
         <div
           style={{
             display: 'flex',
@@ -198,9 +207,10 @@ export const Header: React.FC<HeaderProps> = ({
             color: 'var(--text-muted)',
           }}
           className="header-sync-time"
+          title={`Last data sync: ${lastFetchedAt ? lastFetchedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Not yet synced'}`}
         >
           <Clock size={13} />
-          <span>{formatLastSync(lastFetchedAt)}</span>
+          <span>{formatClockTime(currentTime)}</span>
         </div>
 
         {/* Manual Refresh Button */}

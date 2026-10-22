@@ -20,7 +20,7 @@ describe('Navigation and Layout Controls', () => {
     } as Response);
   });
 
-  it('navigates to Global Threats tab and shows M4 roadmap notice', async () => {
+  it('navigates to Global Threats tab and renders interactive globe', async () => {
     render(<App />);
 
     const threatsBtn = screen.getByRole('button', { name: /Global Threats/i });
@@ -28,7 +28,7 @@ describe('Navigation and Layout Controls', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Global Threat Vectors')).toBeInTheDocument();
-      expect(screen.getByText(/3D Globe Geospatial Engine Scheduled for Milestone 4/i)).toBeInTheDocument();
+      expect(screen.getByText(/3D Geospatial Threat Visualizer/i)).toBeInTheDocument();
     });
   });
 

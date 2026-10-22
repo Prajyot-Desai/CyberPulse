@@ -31,7 +31,7 @@ export const ProtocolChart: React.FC<ProtocolChartProps> = ({ protocols = [] }) 
           icon={<Radio size={32} color="var(--accent-green)" />}
           title="No Protocol Distribution Data"
           description="Transport protocol distributions (TCP, UDP, ICMP, GRE) will display here once upstream metrics are synchronized."
-          hint="Radar Endpoint: /radar/attacks/layer3/summary/protocol"
+          hint="Radar Endpoint: /radar/attacks/layer3/summary/PROTOCOL"
         />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', alignItems: 'center' }}>

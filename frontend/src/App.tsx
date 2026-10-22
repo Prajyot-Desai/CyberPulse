@@ -12,8 +12,6 @@ import { ProtocolChart } from './components/charts/ProtocolChart';
 import { DataSourcePanel } from './components/dashboard/DataSourcePanel';
 import { GlassCard } from './components/common/GlassCard';
 import { Badge } from './components/common/Badge';
-import { EmptyState } from './components/common/EmptyState';
-import { Globe2 } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('overview');
@@ -142,25 +140,13 @@ export const App: React.FC = () => {
         </>
       )}
 
-      {/* TAB: GLOBAL THREATS (Coming in M4) */}
+      {/* TAB: GLOBAL THREATS */}
       {activeTab === 'threats' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <GlobePlaceholder
             observationWindow={observationWindow}
             metrics={overview?.metrics}
           />
-          <GlassCard
-            title="Geospatial Threat Engine Status"
-            subtitle="Milestone 4 implementation roadmap"
-            badge={<Badge variant="orange">In Development</Badge>}
-          >
-            <EmptyState
-              icon={<Globe2 size={40} color="var(--accent-orange)" />}
-              title="3D Globe Geospatial Engine Scheduled for Milestone 4"
-              description="The Three.js and React Three Fiber rendering pipeline is queued for implementation in the next phase. It will project aggregate Cloudflare Radar origin-target vectors onto an interactive 3D WebGL globe."
-              hint="Status: Frontend Shell (Milestone 3) active; Milestone 4 unlocks Three.js & R3F canvas."
-            />
-          </GlassCard>
         </div>
       )}
 

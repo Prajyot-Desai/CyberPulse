@@ -253,73 +253,97 @@ export const HistoricalSummaryCards: React.FC<HistoricalSummaryCardsProps> = ({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
           gap: '16px',
         }}
         id="analytics-summary-grid"
       >
         {cards.map((card) => (
-          <GlassCard key={card.id} className="metric-card">
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: '10px',
-              }}
-            >
-              <span
+          <GlassCard
+            key={card.id}
+            className="metric-card"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <div
                 style={{
-                  fontSize: '12px',
-                  fontFamily: 'var(--font-mono)',
-                  color: 'var(--text-secondary)',
-                  letterSpacing: '0.02em',
-                  textTransform: 'uppercase',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: '10px',
                 }}
               >
-                {card.title}
-              </span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {card.badge}
-                {card.icon}
+                <span
+                  style={{
+                    fontSize: '12px',
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--text-secondary)',
+                    letterSpacing: '0.02em',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {card.title}
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {card.badge}
+                  {card.icon}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  fontSize: '20px',
+                  fontFamily: 'var(--font-mono)',
+                  fontWeight: 700,
+                  color: 'var(--text-primary)',
+                  letterSpacing: '-0.02em',
+                  marginBottom: '4px',
+                }}
+              >
+                {card.value}
               </div>
             </div>
 
             <div
               style={{
-                fontSize: '20px',
-                fontFamily: 'var(--font-mono)',
-                fontWeight: 700,
-                color: 'var(--text-primary)',
-                letterSpacing: '-0.02em',
-                marginBottom: '4px',
-              }}
-            >
-              {card.value}
-            </div>
-
-            <div
-              style={{
                 display: 'flex',
-                alignItems: 'center',
+                alignItems: 'flex-start',
                 justifyContent: 'space-between',
+                gap: '8px',
                 fontSize: '11px',
-                color: 'var(--text-secondary)',
+                lineHeight: '1.4',
+                marginTop: '10px',
+                paddingTop: '8px',
+                borderTop: '1px solid rgba(255, 255, 255, 0.05)',
               }}
             >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {card.subtext}
-              </span>
               <span
                 style={{
-                  color: 'var(--text-muted)',
-                  fontFamily: 'var(--font-mono)',
-                  marginLeft: '8px',
-                  whiteSpace: 'nowrap',
+                  color: 'var(--text-secondary)',
+                  wordBreak: 'break-word',
+                  flex: 1,
                 }}
               >
-                {card.tag}
+                {card.subtext}
               </span>
+              {card.tag && (
+                <span
+                  style={{
+                    color: 'var(--text-muted)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '10px',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                    alignSelf: 'flex-start',
+                  }}
+                >
+                  {card.tag}
+                </span>
+              )}
             </div>
           </GlassCard>
         ))}

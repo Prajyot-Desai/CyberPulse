@@ -27,16 +27,14 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({
 }) => {
   const hasData = layer3Data.length > 0 || layer7Data.length > 0;
 
-  // Align timestamps into unified chart records
+  // Align timestamps into unified chart records sorted chronologically
   const chartData = React.useMemo(() => {
     if (!hasData) return [];
 
-    const map = new Map<string, { timestamp: string; displayTime: string; layer3?: number; layer7?: number }>();
+    const map = new Map<string, { timestamp: string; layer3?: number; layer7?: number }>();
 
     layer3Data.forEach((pt) => {
-      const d = new Date(pt.timestamp);
-      const displayTime = isNaN(d.getTime()) ? pt.timestamp : d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit' });
-      map.set(pt.timestamp, { timestamp: pt.timestamp, displayTime, layer3: pt.value });
+      map.set(pt.timestamp, { timestamp: pt.timestamp, layer3: pt.value });
     });
 
     layer7Data.forEach((pt) => {
@@ -44,9 +42,7 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({
       if (existing) {
         existing.layer7 = pt.value;
       } else {
-        const d = new Date(pt.timestamp);
-        const displayTime = isNaN(d.getTime()) ? pt.timestamp : d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit' });
-        map.set(pt.timestamp, { timestamp: pt.timestamp, displayTime, layer7: pt.value });
+        map.set(pt.timestamp, { timestamp: pt.timestamp, layer7: pt.value });
       }
     });
 
@@ -54,6 +50,50 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({
       (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
   }, [layer3Data, layer7Data, hasData]);
+
+  // Concise tick label tailored to the observation window
+  const formatXAxisTick = (timestamp: string) => {
+    const d = new Date(timestamp);
+    if (isNaN(d.getTime())) return timestamp;
+    if (observationWindow === '24h') {
+      return (
+        d.toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZone: 'UTC',
+          hour12: false,
+        }) + ' UTC'
+      );
+    }
+    return d.toLocaleDateString([], {
+      month: 'short',
+      day: 'numeric',
+      timeZone: 'UTC',
+    });
+  };
+
+  // Full unambiguous timestamp for tooltips (includes year, date, time, and UTC timezone)
+  const formatTooltipTimestamp = (timestamp: string) => {
+    const d = new Date(timestamp);
+    if (isNaN(d.getTime())) return timestamp;
+    return d.toLocaleString([], {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'UTC',
+      timeZoneName: 'short',
+    });
+  };
+
+  // Calculate sensible tick interval to prevent label overlap across different windows
+  const tickInterval = React.useMemo(() => {
+    const total = chartData.length;
+    if (total <= 8) return 0; // Show all ticks when points are few
+    // Aim for ~6 to 8 evenly distributed ticks across chart width
+    return Math.max(1, Math.floor(total / 7));
+  }, [chartData.length]);
 
   return (
     <GlassCard
@@ -90,7 +130,10 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.05)" />
               <XAxis
-                dataKey="displayTime"
+                dataKey="timestamp"
+                tickFormatter={formatXAxisTick}
+                interval={tickInterval}
+                minTickGap={25}
                 stroke="var(--text-muted)"
                 fontSize={11}
                 tickLine={false}
@@ -103,6 +146,11 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({
                 fontFamily="var(--font-mono)"
               />
               <Tooltip
+                labelFormatter={(label) => formatTooltipTimestamp(String(label))}
+                formatter={(value: any, name: any) => [
+                  typeof value === 'number' ? value.toFixed(2) : value,
+                  name,
+                ]}
                 contentStyle={{
                   backgroundColor: '#0c1018',
                   border: '1px solid var(--border-subtle)',

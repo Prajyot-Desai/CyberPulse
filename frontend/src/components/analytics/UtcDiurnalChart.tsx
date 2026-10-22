@@ -36,6 +36,10 @@ interface CustomTooltipProps {
 const CustomDiurnalTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label }) => {
   if (!active || !payload || payload.length === 0) return null;
 
+  const hasHourlyData = payload.some(
+    (item) => item.value !== null && item.value !== undefined
+  );
+
   return (
     <div
       style={{
@@ -52,34 +56,40 @@ const CustomDiurnalTooltip: React.FC<CustomTooltipProps> = ({ active, payload, l
       <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
         {label} UTC
       </div>
-      {payload.map((item, idx) => (
-        <div
-          key={idx}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '14px',
-            marginBottom: '3px',
-          }}
-        >
-          <span style={{ color: item.color, display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span
-              style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                backgroundColor: item.color,
-                display: 'inline-block',
-              }}
-            />
-            {item.name}:
-          </span>
-          <span style={{ fontWeight: 600 }}>
-            {item.value !== null && item.value !== undefined ? item.value.toFixed(2) : 'No data'}
-          </span>
+      {!hasHourlyData ? (
+        <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', padding: '4px 0' }}>
+          No telemetry recorded for this hour
         </div>
-      ))}
+      ) : (
+        payload.map((item, idx) => (
+          <div
+            key={idx}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '14px',
+              marginBottom: '3px',
+            }}
+          >
+            <span style={{ color: item.color, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  backgroundColor: item.color,
+                  display: 'inline-block',
+                }}
+              />
+              {item.name}:
+            </span>
+            <span style={{ fontWeight: 600 }}>
+              {item.value !== null && item.value !== undefined ? item.value.toFixed(2) : 'No data'}
+            </span>
+          </div>
+        ))
+      )}
       <div
         style={{
           fontSize: '10px',
@@ -179,7 +189,7 @@ export const UtcDiurnalChart: React.FC<UtcDiurnalChartProps> = ({
                 tickLine={false}
                 fontFamily="var(--font-mono)"
               />
-              <Tooltip content={<CustomDiurnalTooltip />} />
+              <Tooltip content={<CustomDiurnalTooltip />} cursor={false} />
               <Legend
                 wrapperStyle={{
                   fontSize: '12px',

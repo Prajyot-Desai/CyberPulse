@@ -226,7 +226,7 @@ export const SpikeCandidatesPanel: React.FC<SpikeCandidatesPanelProps> = ({
       >
         <AlertTriangle size={16} color="var(--accent-amber)" style={{ flexShrink: 0, marginTop: '2px' }} />
         <span>
-          <strong style={{ color: 'var(--text-primary)' }}>Statistical Telemetry Notice:</strong> Observations listed below represent statistical outliers (robust modified z-score $\ge 2.0$) relative to the median & MAD baseline of the selected window. They are mathematical telemetry anomalies, not confirmed security incidents or verified attack events. Layer 3 and Layer 7 metrics represent distinct physical dimensions and are never summed.
+          <strong style={{ color: 'var(--text-primary)' }}>Statistical Telemetry Notice:</strong> Observations listed below represent statistical outliers (robust modified z-score ≥ 2.0) relative to the median & MAD baseline of the selected window. They are mathematical telemetry anomalies, not confirmed security incidents or verified attack events. Layer 3 and Layer 7 metrics represent distinct physical dimensions and are never summed.
         </span>
       </div>
 

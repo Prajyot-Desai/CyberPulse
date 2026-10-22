@@ -4,7 +4,9 @@ import App from '../src/App';
 import { HistoricalSummaryCards } from '../src/components/analytics/HistoricalSummaryCards';
 import { UtcDiurnalChart } from '../src/components/analytics/UtcDiurnalChart';
 import { SpikeCandidatesPanel } from '../src/components/analytics/SpikeCandidatesPanel';
+import { TimeseriesChart } from '../src/components/charts/TimeseriesChart';
 import { TimeseriesPoint, RadarOverviewResponse } from '../src/types/api';
+import { calculateUtcDiurnalDistribution } from '../src/utils/analytics';
 
 const mockOverviewWithSpikes: RadarOverviewResponse = {
   status: 'fresh',
@@ -167,13 +169,72 @@ describe('Historical Attack Analytics UI Components', () => {
       expect(screen.getByText(/Average normalized activity for each UTC hour/i)).toBeInTheDocument();
       expect(screen.getByText('24 Discrete UTC Buckets')).toBeInTheDocument();
     });
+
+    it('preserves null values for unobserved hours and disables the default grey cursor rectangle', () => {
+      // Single observation at 10:00 UTC; 00:00 UTC has no observations
+      const points: TimeseriesPoint[] = [
+        { timestamp: '2026-10-20T10:00:00Z', value: 50 },
+      ];
+
+      const { container } = render(
+        <UtcDiurnalChart
+          layer3Data={points}
+          layer7Data={[]}
+          observationWindow="7d"
+        />
+      );
+
+      // Verify that calculateUtcDiurnalDistribution returns null for 00:00 UTC (not 0.0)
+      const buckets = calculateUtcDiurnalDistribution(points);
+      expect(buckets[0].average).toBeNull();
+      expect(buckets[0].count).toBe(0);
+
+      // Ensure that recharts tooltip cursor rectangle is disabled (cursor={false})
+      const cursor = container.querySelector('.recharts-tooltip-cursor');
+      expect(cursor).toBeNull();
+    });
   });
 
   // ---------------------------------------------------------------------------
-  // 3. SpikeCandidatesPanel
+  // 3. TimeseriesChart
+  // ---------------------------------------------------------------------------
+  describe('TimeseriesChart', () => {
+    it('renders empty state when no data exists', () => {
+      render(
+        <TimeseriesChart
+          layer3Data={[]}
+          layer7Data={[]}
+          observationWindow="7d"
+        />
+      );
+
+      expect(screen.getByText('No Timeseries Metrics Available')).toBeInTheDocument();
+    });
+
+    it('renders chart title and total points when timeseries data exists', () => {
+      const points: TimeseriesPoint[] = [
+        { timestamp: '2026-10-20T00:00:00Z', value: 10 },
+        { timestamp: '2026-10-20T01:00:00Z', value: 20 },
+      ];
+
+      render(
+        <TimeseriesChart
+          layer3Data={points}
+          layer7Data={[]}
+          observationWindow="24h"
+        />
+      );
+
+      expect(screen.getByText('Aggregated Attack Activity Over Time')).toBeInTheDocument();
+      expect(screen.getByText('Total Points: 2')).toBeInTheDocument();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 4. SpikeCandidatesPanel
   // ---------------------------------------------------------------------------
   describe('SpikeCandidatesPanel', () => {
-    it('displays statistical disclaimer distinguishing anomalies from confirmed incidents', () => {
+    it('displays statistical disclaimer distinguishing anomalies from confirmed incidents with readable ≥ symbol', () => {
       render(
         <SpikeCandidatesPanel
           layer3Data={[]}
@@ -188,6 +249,10 @@ describe('Historical Attack Analytics UI Components', () => {
       expect(
         screen.getByText(/not confirmed security incidents or verified attack events/i)
       ).toBeInTheDocument();
+      // Ensure readable unicode ≥ is rendered, not raw LaTeX $\ge
+      const matchingElements = screen.getAllByText(/robust modified z-score ≥ 2\.0/i);
+      expect(matchingElements.length).toBeGreaterThanOrEqual(2);
+      expect(screen.queryByText(/\$\\ge/)).not.toBeInTheDocument();
     });
 
     it('displays insufficient data state when fewer than 2 observations exist', () => {

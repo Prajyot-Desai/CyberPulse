@@ -556,7 +556,12 @@ async def test_partial_failure_does_not_become_fresh_cache_entry(
 ) -> None:
     """Verify that a partially failed response is not stored in cache as fresh data."""
     base = "https://api.cloudflare.com/client/v4/radar"
-    cache = InMemoryTTLCache(default_ttl_seconds=60)
+    clock_time = 1000.0
+
+    def test_clock() -> float:
+        return clock_time
+
+    cache = InMemoryTTLCache(default_ttl_seconds=60, time_func=test_clock)
     service = RadarService(cache_instance=cache, settings=mock_configured_settings)
 
     # 4 endpoints succeed, 1 endpoint fails
@@ -579,9 +584,16 @@ async def test_partial_failure_does_not_become_fresh_cache_entry(
     overview = await service.get_overview(date_range="7d")
     assert overview.status == DataStatus.PARTIAL
 
-    # Cache should NOT have stored this as a fresh entry
+    # Cache should NOT have stored this as a fresh entry in primary cache
     cached = cache.get("radar_overview_7d")
     assert cached is None
+
+    # Partial cache should store it for short-lived amplification protection
+    assert service.partial_cache.get("radar_overview_7d") is not None
+
+    # Advance clock past the 30-second partial cache TTL
+    clock_time += 31.0
+    assert service.partial_cache.get("radar_overview_7d") is None
 
     # Now recover L7
     respx.get(f"{base}/attacks/layer7/timeseries").mock(
@@ -592,8 +604,9 @@ async def test_partial_failure_does_not_become_fresh_cache_entry(
     assert overview_recovered.status == DataStatus.FRESH
     assert len(overview_recovered.metrics.layer7_timeseries) == 2
 
-    # Complete success IS cached
+    # Complete success IS cached in primary cache, and cleared from partial cache
     assert cache.get("radar_overview_7d") is not None
+    assert service.partial_cache.get("radar_overview_7d") is None
 
 
 @pytest.mark.asyncio
@@ -731,3 +744,121 @@ async def test_radar_service_and_lifespan_client_cleanup(
     # Close via close_radar_service
     await close_radar_service()
     assert client.is_closed is True
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_partial_cache_amplification_protection_and_expiry(
+    mock_configured_settings: Settings,
+) -> None:
+    """Verify that partial responses are cached for 30s to prevent request amplification."""
+    base = "https://api.cloudflare.com/client/v4/radar"
+    clock_time = 5000.0
+
+    def test_clock() -> float:
+        return clock_time
+
+    cache = InMemoryTTLCache(default_ttl_seconds=900, time_func=test_clock)
+    service = RadarService(cache_instance=cache, settings=mock_configured_settings)
+
+    # L3, Targets, Origins, Protocols succeed; L7 fails with 500
+    l3_route = respx.get(f"{base}/attacks/layer3/timeseries").mock(
+        return_value=httpx.Response(200, json=MOCK_L3_TIMESERIES)
+    )
+    l7_route = respx.get(f"{base}/attacks/layer7/timeseries").mock(
+        return_value=httpx.Response(500, text="L7 error")
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/target").mock(
+        return_value=httpx.Response(200, json=MOCK_TOP_TARGETS)
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/origin").mock(
+        return_value=httpx.Response(200, json=MOCK_TOP_ORIGINS)
+    )
+    respx.get(f"{base}/attacks/layer3/summary/PROTOCOL").mock(
+        return_value=httpx.Response(200, json=MOCK_PROTOCOLS)
+    )
+
+    # 1. Initial request: triggers upstream calls
+    res1 = await service.get_overview("7d")
+    assert res1.status == DataStatus.PARTIAL
+    assert l3_route.call_count == 1
+    # L7 fails with 500, triggering 2 retries (total 3 attempts)
+    assert l7_route.call_count == 3
+
+    # 2. Subsequent request 15 seconds later (within 30s partial TTL):
+    clock_time += 15.0
+    res2 = await service.get_overview("7d")
+    assert res2.status == DataStatus.PARTIAL
+    # No new upstream calls made! Upstream amplification protected.
+    assert l3_route.call_count == 1
+    assert l7_route.call_count == 3
+
+    # 3. Request 31 seconds after initial fetch (past 30s partial TTL):
+    clock_time += 16.0  # total elapsed: 31s
+    res3 = await service.get_overview("7d")
+    assert res3.status == DataStatus.PARTIAL
+    # New upstream attempt was made (1 new L3 call, 3 new L7 retry calls)
+    assert l3_route.call_count == 2
+    assert l7_route.call_count == 6
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_partial_cache_does_not_overwrite_valid_full_response(
+    mock_configured_settings: Settings,
+) -> None:
+    """Verify that a partial failure does not overwrite a valid fresh or stale full response in primary cache."""
+    base = "https://api.cloudflare.com/client/v4/radar"
+    clock_time = 10000.0
+
+    def test_clock() -> float:
+        return clock_time
+
+    cache = InMemoryTTLCache(
+        default_ttl_seconds=900,
+        max_stale_seconds=86400,
+        time_func=test_clock,
+    )
+    service = RadarService(cache_instance=cache, settings=mock_configured_settings)
+
+    # Mock all endpoints succeeding initially
+    respx.get(f"{base}/attacks/layer3/timeseries").mock(
+        return_value=httpx.Response(200, json=MOCK_L3_TIMESERIES)
+    )
+    respx.get(f"{base}/attacks/layer7/timeseries").mock(
+        return_value=httpx.Response(200, json=MOCK_L7_TIMESERIES)
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/target").mock(
+        return_value=httpx.Response(200, json=MOCK_TOP_TARGETS)
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/origin").mock(
+        return_value=httpx.Response(200, json=MOCK_TOP_ORIGINS)
+    )
+    respx.get(f"{base}/attacks/layer3/summary/PROTOCOL").mock(
+        return_value=httpx.Response(200, json=MOCK_PROTOCOLS)
+    )
+
+    full_res = await service.get_overview("7d")
+    assert full_res.status == DataStatus.FRESH
+    assert cache.get("radar_overview_7d") is not None
+
+    # Advance clock past fresh TTL (901s) so cache entry becomes stale
+    clock_time += 901.0
+    assert cache.get("radar_overview_7d") is None  # Fresh get returns None
+    val, is_stale, _ = cache.get_with_status("radar_overview_7d")
+    assert is_stale is True  # Stale entry exists!
+
+    # Now upstream returns partial failure
+    respx.get(f"{base}/attacks/layer7/timeseries").mock(
+        return_value=httpx.Response(500, text="L7 degraded")
+    )
+
+    partial_res = await service.get_overview("7d")
+    assert partial_res.status == DataStatus.PARTIAL
+    assert service.partial_cache.get("radar_overview_7d") is not None
+
+    # Verify primary cache still retains the stale full response (not overwritten)
+    val_after, is_stale_after, _ = cache.get_with_status("radar_overview_7d")
+    assert val_after is not None
+    assert is_stale_after is True
+    assert len(val_after.metrics.layer7_timeseries) == 2  # Original 2 points preserved!

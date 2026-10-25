@@ -62,11 +62,17 @@ class RadarService:
         self,
         client: Optional[CloudflareRadarClient] = None,
         cache_instance: Optional[InMemoryTTLCache] = None,
+        partial_cache_instance: Optional[InMemoryTTLCache] = None,
         settings: Optional[Settings] = None,
     ):
         self.settings = settings or get_settings()
         self.client = client or CloudflareRadarClient(settings=self.settings)
         self.cache = cache_instance or default_cache
+        self.partial_cache = partial_cache_instance or InMemoryTTLCache(
+            default_ttl_seconds=self.settings.CACHE_PARTIAL_TTL_SECONDS,
+            max_stale_seconds=self.settings.CACHE_PARTIAL_TTL_SECONDS,
+            time_func=getattr(self.cache, "_time_func", None),
+        )
         self.last_successful_sync: Optional[datetime] = None
         self.last_error: Optional[str] = None
 
@@ -244,18 +250,26 @@ class RadarService:
 
         cache_key = f"radar_overview_{date_range}"
 
-        # 2. Fast-path: Check fresh cache
+        # 2. Fast-path: Check fresh primary cache first, then short-lived partial cache
         cached_data = self.cache.get(cache_key)
         if cached_data is not None and isinstance(cached_data, RadarOverviewResponse):
             return cached_data
 
+        cached_partial = self.partial_cache.get(cache_key)
+        if cached_partial is not None and isinstance(cached_partial, RadarOverviewResponse):
+            return cached_partial
+
         # 3. Synchronize concurrent requests using key lock
         lock = await self.cache.get_key_lock(cache_key)
         async with lock:
-            # Re-check cache after acquiring lock
+            # Re-check primary and partial caches after acquiring lock
             cached_data = self.cache.get(cache_key)
             if cached_data is not None and isinstance(cached_data, RadarOverviewResponse):
                 return cached_data
+
+            cached_partial = self.partial_cache.get(cache_key)
+            if cached_partial is not None and isinstance(cached_partial, RadarOverviewResponse):
+                return cached_partial
 
             # 4. Fetch upstream concurrently
             try:
@@ -330,6 +344,7 @@ class RadarService:
                     # 2. Clearly mark with PARTIAL status.
                     # 3. Preserve successful endpoints while missing series remain empty.
                     # 4. Do not cache partial payload into fresh cache.
+                    # 5. Cache into short-lived partial cache to protect upstream from request amplification.
                     first_err = next(
                         res for _, res in dimension_map if isinstance(res, Exception)
                     )
@@ -343,7 +358,7 @@ class RadarService:
                         f"Partial upstream failure for date_range={date_range}: {failed_dimensions}"
                     )
 
-                    return RadarOverviewResponse(
+                    partial_response = RadarOverviewResponse(
                         status=DataStatus.PARTIAL,
                         observation_window=date_range,
                         fetched_at=now,
@@ -351,6 +366,16 @@ class RadarService:
                         metrics=metrics,
                         warning=warning_msg,
                     )
+
+                    # Store in short-lived partial cache (default 30s, no stale retention beyond TTL)
+                    self.partial_cache.set(
+                        cache_key,
+                        partial_response,
+                        ttl_seconds=self.settings.CACHE_PARTIAL_TTL_SECONDS,
+                        max_stale_seconds=self.settings.CACHE_PARTIAL_TTL_SECONDS,
+                    )
+
+                    return partial_response
 
                 # All upstream calls succeeded
                 self.last_successful_sync = now
@@ -372,6 +397,8 @@ class RadarService:
                     ttl_seconds=self.settings.CACHE_TTL_SECONDS,
                     max_stale_seconds=self.settings.CACHE_MAX_STALE_SECONDS,
                 )
+                # Clear any lingering short-lived partial entry
+                self.partial_cache.delete(cache_key)
                 return response
 
             except Exception as err:
@@ -420,6 +447,7 @@ class RadarService:
         """Close associated client connections and resources."""
         if self.client:
             await self.client.close()
+        self.partial_cache.clear()
 
 
 _service_instance: Optional[RadarService] = None

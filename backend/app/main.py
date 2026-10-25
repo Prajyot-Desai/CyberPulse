@@ -11,6 +11,7 @@ from app.api.v1.health import router as root_health_router
 from app.api.v1.router import api_v1_router
 from app.core.config import Settings, get_settings
 from app.core.logging import logger, setup_logging
+from app.core.rate_limit import RateLimitMiddleware, SlidingWindowRateLimiter
 from app.services.radar_service import close_radar_service
 
 
@@ -61,7 +62,10 @@ def resolve_frontend_dist(settings: Optional[Settings] = None) -> Optional[Path]
     return None
 
 
-def create_app(settings: Optional[Settings] = None) -> FastAPI:
+def create_app(
+    settings: Optional[Settings] = None,
+    rate_limiter: Optional[SlidingWindowRateLimiter] = None,
+) -> FastAPI:
     """Application factory configuring middleware, routes, and lifespan."""
     app_settings = settings or get_settings()
 
@@ -77,11 +81,23 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS configuration
+    # 1. Rate limiting middleware for /api/v1/* routes (health probes exempt)
+    limiter = rate_limiter or SlidingWindowRateLimiter(
+        requests_per_minute=app_settings.BACKEND_RATE_LIMIT_PER_MINUTE
+    )
+    app.state.rate_limiter = limiter
+
+    app.add_middleware(
+        RateLimitMiddleware,
+        limiter=limiter,
+        trusted_proxies=app_settings.TRUSTED_PROXIES,
+    )
+
+    # 2. CORS configuration (allow_credentials=False for stateless API and wildcard origin safety)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=app_settings.BACKEND_CORS_ORIGINS,
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )

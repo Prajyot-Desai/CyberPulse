@@ -51,9 +51,11 @@ class Settings(BaseSettings):
     # Reliability & Caching parameters
     CACHE_TTL_SECONDS: int = 900  # 15 minutes default TTL
     CACHE_MAX_STALE_SECONDS: int = 86400  # 24 hours maximum stale age
+    CACHE_PARTIAL_TTL_SECONDS: int = 30  # 30 seconds for short-lived partial upstream responses
     RADAR_REQUEST_TIMEOUT_SECONDS: float = 15.0
     RADAR_MAX_RETRIES: int = 2
     BACKEND_RATE_LIMIT_PER_MINUTE: int = 60
+    TRUSTED_PROXIES: Union[List[str], str] = []
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
@@ -64,6 +66,16 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return value
         return ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    @field_validator("TRUSTED_PROXIES", mode="before")
+    @classmethod
+    def assemble_trusted_proxies(cls, value: Union[str, List[str]]) -> List[str]:
+        """Convert a comma-separated string of trusted proxy IPs/CIDRs into a list."""
+        if isinstance(value, str):
+            return [proxy.strip() for proxy in value.split(",") if proxy.strip()]
+        if isinstance(value, list):
+            return value
+        return []
 
     @property
     def is_cloudflare_configured(self) -> bool:

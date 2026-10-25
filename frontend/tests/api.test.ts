@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { apiService, ApiError } from '../src/services/api';
+import { apiService, ApiError, getHealthUrl } from '../src/services/api';
 import { RadarOverviewResponse, RadarStatusResponse } from '../src/types/api';
 
 describe('apiService', () => {
@@ -146,5 +146,27 @@ describe('apiService', () => {
 
     expect(addListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function), { once: true });
     expect(removeListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+
+  describe('getHealthUrl', () => {
+    it('returns /health for default same-origin /api/v1', () => {
+      expect(getHealthUrl('/api/v1')).toBe('/health');
+      expect(getHealthUrl('/api/v1/')).toBe('/health');
+    });
+
+    it('returns /health when baseUrl is empty or root', () => {
+      expect(getHealthUrl('')).toBe('/health');
+      expect(getHealthUrl('/')).toBe('/health');
+    });
+
+    it('resolves root /health on backend host when absolute HTTP/HTTPS URL is provided', () => {
+      expect(getHealthUrl('http://127.0.0.1:8000/api/v1')).toBe('http://127.0.0.1:8000/health');
+      expect(getHealthUrl('https://api.cyberpulse.example.com/api/v1')).toBe(
+        'https://api.cyberpulse.example.com/health'
+      );
+      expect(getHealthUrl('https://api.cyberpulse.example.com')).toBe(
+        'https://api.cyberpulse.example.com/health'
+      );
+    });
   });
 });

@@ -144,13 +144,31 @@ export async function requestWithTimeout<T>(
   }
 }
 
+/**
+ * Resolve health check endpoint URL.
+ * Works seamlessly whether UI and API share one origin, or when a separate backend
+ * API base URL (absolute HTTP/HTTPS URL) is configured.
+ */
+export function getHealthUrl(baseUrl: string = BASE_URL): string {
+  if (baseUrl.startsWith('http://') || baseUrl.startsWith('https://')) {
+    try {
+      const parsed = new URL(baseUrl);
+      return `${parsed.origin}/health`;
+    } catch {
+      return `${baseUrl.replace(/\/api\/v1\/?$/, '')}/health`;
+    }
+  }
+  const prefix = baseUrl.replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
+  return prefix ? `${prefix}/health` : '/health';
+}
+
 export const apiService = {
   /**
    * Health check to confirm backend process is alive.
    */
   async checkHealth(signal?: AbortSignal): Promise<HealthResponse> {
-    // Check root /health (supported directly by FastAPI backend)
-    return requestWithTimeout<HealthResponse>('/health', { signal });
+    const url = getHealthUrl(BASE_URL);
+    return requestWithTimeout<HealthResponse>(url, { signal });
   },
 
   /**

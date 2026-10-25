@@ -1,0 +1,59 @@
+# ==============================================================================
+# CyberPulse — Docker Build Context Ignore (.dockerignore)
+# ==============================================================================
+
+# Version control & Git metadata
+.git/
+.gitignore
+
+# Environment & Secrets (NEVER include credentials in build context)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python virtual environment & interpreter artifacts
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Node.js dependencies & package caches
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+.npm/
+
+# Local build outputs (ensure fresh build inside container)
+dist/
+frontend/dist/
+build/
+*.tsbuildinfo
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operating System files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+
+# Temporary files & logs
+*.log
+logs/
+temp/
+tmp/

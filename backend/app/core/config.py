@@ -1,8 +1,8 @@
 """Application configuration management using Pydantic Settings."""
 
 from functools import lru_cache
-from typing import List, Union
-from pydantic import SecretStr, field_validator
+from typing import List, Optional, Union
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,9 +22,20 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     LOG_LEVEL: str = "INFO"
 
-    # Server binding
+    # Server binding & hosting platform adaptation
     BACKEND_HOST: str = "127.0.0.1"
     BACKEND_PORT: int = 8000
+    PORT: Optional[int] = None
+
+    # Static distribution directory override
+    FRONTEND_DIST_DIR: Optional[str] = None
+
+    @model_validator(mode="after")
+    def resolve_server_port(self) -> "Settings":
+        """Support hosting platforms that inject PORT (e.g., Render, Cloud Run, Railway)."""
+        if self.PORT is not None:
+            self.BACKEND_PORT = self.PORT
+        return self
 
     # Cross-Origin Resource Sharing (CORS)
     BACKEND_CORS_ORIGINS: Union[List[str], str] = [

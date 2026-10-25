@@ -16,6 +16,7 @@ export interface UseRadarReturn {
   isStale: boolean;
   isUnconfigured: boolean;
   isUnavailable: boolean;
+  isPartial: boolean;
   lastFetchedAt: Date | null;
 }
 
@@ -113,6 +114,7 @@ export function useRadar(initialWindow: ObservationWindow = '7d'): UseRadarRetur
     overview?.status === 'unconfigured' || status?.upstream_configured === false
   );
   const isUnavailable = Boolean(overview?.status === 'unavailable');
+  const isPartial = Boolean(overview?.status === 'partial');
 
   return {
     overview,
@@ -128,6 +130,7 @@ export function useRadar(initialWindow: ObservationWindow = '7d'): UseRadarRetur
     isStale,
     isUnconfigured,
     isUnavailable,
+    isPartial,
     lastFetchedAt,
   };
 }

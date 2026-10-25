@@ -4,7 +4,7 @@ import App from '../src/App';
 import { HistoricalSummaryCards } from '../src/components/analytics/HistoricalSummaryCards';
 import { UtcDiurnalChart } from '../src/components/analytics/UtcDiurnalChart';
 import { SpikeCandidatesPanel } from '../src/components/analytics/SpikeCandidatesPanel';
-import { TimeseriesChart } from '../src/components/charts/TimeseriesChart';
+import { TimeseriesChart, formatXAxisTick } from '../src/components/charts/TimeseriesChart';
 import { TimeseriesPoint, RadarOverviewResponse } from '../src/types/api';
 import { calculateUtcDiurnalDistribution } from '../src/utils/analytics';
 
@@ -227,6 +227,33 @@ describe('Historical Attack Analytics UI Components', () => {
 
       expect(screen.getByText('Aggregated Attack Activity Over Time')).toBeInTheDocument();
       expect(screen.getByText('Total Points: 2')).toBeInTheDocument();
+    });
+
+    it('formats 1d and 24h window ticks as hourly UTC time', () => {
+      const sampleTimestamp = '2026-10-20T14:30:00Z';
+      expect(formatXAxisTick(sampleTimestamp, '1d')).toBe('14:30 UTC');
+      expect(formatXAxisTick(sampleTimestamp, '24h')).toBe('14:30 UTC');
+    });
+
+    it('formats multi-day windows as UTC dates without hourly time', () => {
+      const sampleTimestamp = '2026-10-20T14:30:00Z';
+      const formatted7d = formatXAxisTick(sampleTimestamp, '7d');
+      expect(formatted7d).toMatch(/Oct/);
+      expect(formatted7d).toMatch(/20/);
+      expect(formatted7d).not.toMatch(/UTC/);
+      expect(formatted7d).not.toMatch(/:/);
+
+      const formatted14d = formatXAxisTick(sampleTimestamp, '14d');
+      expect(formatted14d).toMatch(/Oct/);
+      expect(formatted14d).toMatch(/20/);
+
+      const formatted30d = formatXAxisTick(sampleTimestamp, '30d');
+      expect(formatted30d).toMatch(/Oct/);
+      expect(formatted30d).toMatch(/20/);
+    });
+
+    it('handles invalid timestamps deterministically', () => {
+      expect(formatXAxisTick('not-a-timestamp', '1d')).toBe('not-a-timestamp');
     });
   });
 

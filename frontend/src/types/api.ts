@@ -3,7 +3,7 @@
  * Strictly mirrors the backend Pydantic models from `backend/app/models/radar.py`.
  */
 
-export type DataStatus = 'fresh' | 'stale' | 'unavailable' | 'unconfigured';
+export type DataStatus = 'fresh' | 'stale' | 'unavailable' | 'unconfigured' | 'partial';
 
 export type ObservationWindow = '1d' | '7d' | '14d' | '30d';
 

@@ -39,6 +39,7 @@ class Settings(BaseSettings):
 
     # Reliability & Caching parameters
     CACHE_TTL_SECONDS: int = 900  # 15 minutes default TTL
+    CACHE_MAX_STALE_SECONDS: int = 86400  # 24 hours maximum stale age
     RADAR_REQUEST_TIMEOUT_SECONDS: float = 15.0
     RADAR_MAX_RETRIES: int = 2
     BACKEND_RATE_LIMIT_PER_MINUTE: int = 60

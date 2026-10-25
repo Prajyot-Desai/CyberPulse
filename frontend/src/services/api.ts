@@ -19,17 +19,63 @@ export class ApiError extends Error {
   }
 }
 
-async function requestWithTimeout<T>(
+/**
+ * Extract clean, human-readable message from FastAPI validation errors or error detail payloads.
+ */
+export function formatErrorDetail(detail: unknown): string | null {
+  if (typeof detail === 'string') {
+    const trimmed = detail.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => {
+        if (typeof item === 'string') return item.trim();
+        if (item && typeof item === 'object') {
+          const dict = item as Record<string, unknown>;
+          if (typeof dict.msg === 'string') {
+            const loc = Array.isArray(dict.loc)
+              ? dict.loc.filter((part) => part !== 'body' && part !== 'query').join('.')
+              : '';
+            return loc ? `${loc}: ${dict.msg}` : dict.msg;
+          }
+        }
+        return null;
+      })
+      .filter((msg): msg is string => Boolean(msg && msg.length > 0));
+
+    if (messages.length > 0) {
+      return messages.join('; ');
+    }
+  }
+
+  return null;
+}
+
+export async function requestWithTimeout<T>(
   url: string,
   options: RequestInit = {},
   timeoutMs: number = REQUEST_TIMEOUT_MS
 ): Promise<T> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  // If caller signal is already aborted before we start, fail fast
+  if (options.signal?.aborted) {
+    throw new ApiError('Request was cancelled.', undefined, true);
+  }
 
-  // Link caller signal if provided
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const onCallerAbort = () => {
+    controller.abort();
+  };
+
   if (options.signal) {
-    options.signal.addEventListener('abort', () => controller.abort());
+    options.signal.addEventListener('abort', onCallerAbort, { once: true });
   }
 
   try {
@@ -46,8 +92,11 @@ async function requestWithTimeout<T>(
       let errorMessage = `Server error (HTTP ${response.status})`;
       try {
         const errorJson = await response.json();
-        if (errorJson && typeof errorJson.detail === 'string') {
-          errorMessage = errorJson.detail;
+        const extractedDetail = formatErrorDetail(errorJson?.detail);
+        if (extractedDetail) {
+          errorMessage = extractedDetail;
+        } else if (response.statusText) {
+          errorMessage = response.statusText;
         }
       } catch {
         // Fallback to status text
@@ -61,9 +110,19 @@ async function requestWithTimeout<T>(
     if (error instanceof ApiError) {
       throw error;
     }
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new ApiError('Request timed out or was cancelled by user.', undefined, true);
+
+    const isAbort =
+      (error instanceof DOMException && error.name === 'AbortError') ||
+      (error instanceof Error && error.name === 'AbortError') ||
+      controller.signal.aborted;
+
+    if (isAbort) {
+      const message = timedOut
+        ? 'Request timed out waiting for server response.'
+        : 'Request was cancelled.';
+      throw new ApiError(message, undefined, true);
     }
+
     if (error instanceof TypeError && error.message.includes('fetch')) {
       throw new ApiError(
         'Unable to connect to CyberPulse backend at 127.0.0.1:8000. Is the server running?',
@@ -71,6 +130,7 @@ async function requestWithTimeout<T>(
         true
       );
     }
+
     throw new ApiError(
       error instanceof Error ? error.message : 'An unknown network error occurred',
       undefined,
@@ -78,6 +138,9 @@ async function requestWithTimeout<T>(
     );
   } finally {
     clearTimeout(timeoutId);
+    if (options.signal) {
+      options.signal.removeEventListener('abort', onCallerAbort);
+    }
   }
 }
 

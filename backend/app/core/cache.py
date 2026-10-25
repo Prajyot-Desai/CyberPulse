@@ -9,24 +9,52 @@ from typing import Any, Dict, Optional, Tuple
 class CacheEntry:
     """Internal container for cached item, expiration timestamp, and metadata."""
 
-    def __init__(self, value: Any, ttl_seconds: int):
-        now = time.monotonic()
+    def __init__(
+        self,
+        value: Any,
+        ttl_seconds: int,
+        max_stale_seconds: int = 86400,
+        now_mono: Optional[float] = None,
+    ):
+        now = now_mono if now_mono is not None else time.monotonic()
         self.value = value
         self.created_at_wall = datetime.now(timezone.utc)
         self.created_at_mono = now
         self.expires_at_mono = now + ttl_seconds
+        self.max_stale_seconds = max_stale_seconds
+        self.stale_until_mono = now + max_stale_seconds
 
     @property
     def is_expired(self) -> bool:
         """Return True if current time exceeds monotonic expiration time."""
         return time.monotonic() >= self.expires_at_mono
 
+    def is_expired_at(self, now_mono: float) -> bool:
+        """Return True if specified monotonic time exceeds expiration time."""
+        return now_mono >= self.expires_at_mono
+
+    @property
+    def is_stale_expired(self) -> bool:
+        """Return True if current time exceeds maximum allowed stale retention window."""
+        return time.monotonic() >= self.stale_until_mono
+
+    def is_stale_expired_at(self, now_mono: float) -> bool:
+        """Return True if specified monotonic time exceeds maximum allowed stale retention window."""
+        return now_mono >= self.stale_until_mono
+
 
 class InMemoryTTLCache:
-    """Thread-safe and async-aware in-memory cache supporting TTL and stale fallback."""
+    """Thread-safe and async-aware in-memory cache supporting TTL, bounded stale fallback, and clock injection."""
 
-    def __init__(self, default_ttl_seconds: int = 900):
+    def __init__(
+        self,
+        default_ttl_seconds: int = 900,
+        max_stale_seconds: int = 86400,
+        time_func: Optional[Any] = None,
+    ):
         self.default_ttl = default_ttl_seconds
+        self.max_stale_seconds = max_stale_seconds
+        self._time_func = time_func if time_func is not None else time.monotonic
         self._entries: Dict[str, CacheEntry] = {}
         self._locks: Dict[str, asyncio.Lock] = {}
         self._master_lock = asyncio.Lock()
@@ -47,7 +75,13 @@ class InMemoryTTLCache:
             self._misses += 1
             return None
 
-        if entry.is_expired:
+        now = self._time_func()
+        if entry.is_stale_expired_at(now):
+            self._entries.pop(key, None)
+            self._misses += 1
+            return None
+
+        if entry.is_expired_at(now):
             self._misses += 1
             return None
 
@@ -60,24 +94,46 @@ class InMemoryTTLCache:
 
         Returns:
             (value, is_stale, created_at_utc)
-            If key does not exist at all, returns (None, False, None).
+            If key does not exist or has exceeded max_stale_seconds, returns (None, False, None).
         """
         entry = self._entries.get(key)
         if entry is None:
             self._misses += 1
             return None, False, None
 
-        if entry.is_expired:
-            # Entry exists but is past TTL -> Stale
+        now = self._time_func()
+        if entry.is_stale_expired_at(now):
+            # Expired beyond max stale age: evict and treat as unavailable/miss
+            self._entries.pop(key, None)
+            self._misses += 1
+            return None, False, None
+
+        if entry.is_expired_at(now):
+            # Entry exists but is past TTL -> Stale (within max stale age)
             return entry.value, True, entry.created_at_wall
 
         self._hits += 1
         return entry.value, False, entry.created_at_wall
 
-    def set(self, key: str, value: Any, ttl_seconds: Optional[int] = None) -> None:
-        """Store a value with a specific or default TTL."""
+    def set(
+        self,
+        key: str,
+        value: Any,
+        ttl_seconds: Optional[int] = None,
+        max_stale_seconds: Optional[int] = None,
+    ) -> None:
+        """Store a value with a specific or default TTL and maximum stale retention window."""
         ttl = ttl_seconds if ttl_seconds is not None else self.default_ttl
-        self._entries[key] = CacheEntry(value=value, ttl_seconds=ttl)
+        max_stale = (
+            max_stale_seconds if max_stale_seconds is not None else self.max_stale_seconds
+        )
+        now = self._time_func()
+        self._entries[key] = CacheEntry(
+            value=value,
+            ttl_seconds=ttl,
+            max_stale_seconds=max_stale,
+            now_mono=now,
+        )
 
     def delete(self, key: str) -> bool:
         """Remove an item from cache if present."""
@@ -91,8 +147,12 @@ class InMemoryTTLCache:
 
     def stats(self) -> Dict[str, Any]:
         """Return operational metrics for cache monitoring."""
-        now = time.monotonic()
-        active_entries = sum(1 for e in self._entries.values() if not e.is_expired)
+        now = self._time_func()
+        expired_keys = [k for k, e in self._entries.items() if e.is_stale_expired_at(now)]
+        for k in expired_keys:
+            self._entries.pop(k, None)
+
+        active_entries = sum(1 for e in self._entries.values() if not e.is_expired_at(now))
         stale_entries = len(self._entries) - active_entries
         return {
             "total_entries": len(self._entries),

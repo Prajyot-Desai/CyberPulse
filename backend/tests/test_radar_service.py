@@ -494,3 +494,240 @@ async def test_successful_overview_with_documented_radar_shapes(
     proto_dict = {p.protocol: p.percentage for p in overview.metrics.protocols}
     assert proto_dict["UDP"] == 68.5
     assert proto_dict["TCP"] == 28.3
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_partial_upstream_failure_preserves_successful_endpoints(
+    mock_configured_settings: Settings,
+) -> None:
+    """Verify that when one endpoint fails, successful dimensions are preserved and status is PARTIAL."""
+    base = "https://api.cloudflare.com/client/v4/radar"
+    cache = InMemoryTTLCache(default_ttl_seconds=60)
+    service = RadarService(cache_instance=cache, settings=mock_configured_settings)
+
+    # L3 succeeds, Target succeeds, Origin succeeds, Protocol succeeds
+    respx.get(f"{base}/attacks/layer3/timeseries").mock(
+        return_value=httpx.Response(200, json=MOCK_L3_TIMESERIES)
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/target").mock(
+        return_value=httpx.Response(200, json=MOCK_TOP_TARGETS)
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/origin").mock(
+        return_value=httpx.Response(200, json=MOCK_TOP_ORIGINS)
+    )
+    respx.get(f"{base}/attacks/layer3/summary/PROTOCOL").mock(
+        return_value=httpx.Response(200, json=MOCK_PROTOCOLS)
+    )
+
+    # L7 fails with 500
+    respx.get(f"{base}/attacks/layer7/timeseries").mock(
+        return_value=httpx.Response(500, text="Internal Error in L7 service")
+    )
+
+    overview = await service.get_overview(date_range="7d")
+
+    # 1. Status is PARTIAL, not FRESH, not STALE
+    assert overview.status == DataStatus.PARTIAL
+    assert overview.is_stale is False
+    assert overview.metrics is not None
+
+    # 2. Successful endpoints preserved
+    assert len(overview.metrics.layer3_timeseries) == 2
+    assert overview.metrics.layer3_timeseries[0].value == 120.5
+    assert len(overview.metrics.top_target_countries) == 2
+    assert len(overview.metrics.top_origin_countries) == 2
+    assert len(overview.metrics.protocols) == 3
+
+    # 3. Failed dimension is represented as missing/empty, NOT fake zeroes
+    assert overview.metrics.layer7_timeseries == []
+
+    # 4. Descriptive warning mentioning missing dimension and sanitized error
+    assert overview.warning is not None
+    assert "Partial telemetry" in overview.warning
+    assert "Layer 7 timeseries" in overview.warning
+    assert "Internal Error" not in overview.warning  # Sanitized!
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_partial_failure_does_not_become_fresh_cache_entry(
+    mock_configured_settings: Settings,
+) -> None:
+    """Verify that a partially failed response is not stored in cache as fresh data."""
+    base = "https://api.cloudflare.com/client/v4/radar"
+    cache = InMemoryTTLCache(default_ttl_seconds=60)
+    service = RadarService(cache_instance=cache, settings=mock_configured_settings)
+
+    # 4 endpoints succeed, 1 endpoint fails
+    respx.get(f"{base}/attacks/layer3/timeseries").mock(
+        return_value=httpx.Response(200, json=MOCK_L3_TIMESERIES)
+    )
+    respx.get(f"{base}/attacks/layer7/timeseries").mock(
+        return_value=httpx.Response(500, text="L7 failure")
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/target").mock(
+        return_value=httpx.Response(200, json=MOCK_TOP_TARGETS)
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/origin").mock(
+        return_value=httpx.Response(200, json=MOCK_TOP_ORIGINS)
+    )
+    respx.get(f"{base}/attacks/layer3/summary/PROTOCOL").mock(
+        return_value=httpx.Response(200, json=MOCK_PROTOCOLS)
+    )
+
+    overview = await service.get_overview(date_range="7d")
+    assert overview.status == DataStatus.PARTIAL
+
+    # Cache should NOT have stored this as a fresh entry
+    cached = cache.get("radar_overview_7d")
+    assert cached is None
+
+    # Now recover L7
+    respx.get(f"{base}/attacks/layer7/timeseries").mock(
+        return_value=httpx.Response(200, json=MOCK_L7_TIMESERIES)
+    )
+
+    overview_recovered = await service.get_overview(date_range="7d")
+    assert overview_recovered.status == DataStatus.FRESH
+    assert len(overview_recovered.metrics.layer7_timeseries) == 2
+
+    # Complete success IS cached
+    assert cache.get("radar_overview_7d") is not None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_stale_cache_older_than_max_stale_age_rejected_as_unavailable(
+    mock_configured_settings: Settings,
+) -> None:
+    """Verify that stale cached data older than max_stale_seconds (24h) is rejected cleanly."""
+    base = "https://api.cloudflare.com/client/v4/radar"
+    current_time = 10000.0
+
+    def fake_clock() -> float:
+        return current_time
+
+    cache = InMemoryTTLCache(
+        default_ttl_seconds=900,
+        max_stale_seconds=86400,
+        time_func=fake_clock,
+    )
+    service = RadarService(cache_instance=cache, settings=mock_configured_settings)
+
+    # 1. Initial successful fetch
+    mock_all_radar_routes()
+    fresh = await service.get_overview(date_range="7d")
+    assert fresh.status == DataStatus.FRESH
+
+    # 2. Advance clock past fresh TTL (e.g. 1 hour later = 3600s), but within 24h
+    current_time += 3600.0
+
+    # Mock upstream failure
+    respx.clear()
+    respx.get(f"{base}/attacks/layer3/timeseries").mock(
+        return_value=httpx.Response(500, text="Cloudflare down")
+    )
+    respx.get(f"{base}/attacks/layer7/timeseries").mock(
+        return_value=httpx.Response(500, text="Cloudflare down")
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/target").mock(
+        return_value=httpx.Response(500, text="Cloudflare down")
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/origin").mock(
+        return_value=httpx.Response(500, text="Cloudflare down")
+    )
+    respx.get(f"{base}/attacks/layer3/summary/PROTOCOL").mock(
+        return_value=httpx.Response(500, text="Cloudflare down")
+    )
+
+    # Should fall back to STALE because 1 hour is within 24 hours
+    stale_res = await service.get_overview(date_range="7d")
+    assert stale_res.status == DataStatus.STALE
+    assert stale_res.metrics is not None
+
+    # 3. Advance clock past 24 hours (86401 seconds elapsed from initial creation)
+    current_time = 10000.0 + 86401.0
+
+    # Old data must be rejected as UNAVAILABLE, not served as valid telemetry
+    rejected_res = await service.get_overview(date_range="7d")
+    assert rejected_res.status == DataStatus.UNAVAILABLE
+    assert rejected_res.metrics is None
+    assert "Upstream Cloudflare Radar data unavailable" in (rejected_res.warning or "")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_public_upstream_warnings_sanitized_and_leak_no_secrets(
+    mock_configured_settings: Settings,
+) -> None:
+    """Verify public response warnings and status warnings never leak raw bodies or tokens."""
+    base = "https://api.cloudflare.com/client/v4/radar"
+    cache = InMemoryTTLCache(default_ttl_seconds=60)
+    service = RadarService(cache_instance=cache, settings=mock_configured_settings)
+
+    # 1. 401 Unauthorized with sensitive details in body
+    respx.get(f"{base}/attacks/layer3/timeseries").mock(
+        return_value=httpx.Response(401, text='{"secret_token":"cf-secret-xyz","msg":"unauthorized"}')
+    )
+    respx.get(f"{base}/attacks/layer7/timeseries").mock(
+        return_value=httpx.Response(401, text='{"secret_token":"cf-secret-xyz","msg":"unauthorized"}')
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/target").mock(
+        return_value=httpx.Response(401, text='{"secret_token":"cf-secret-xyz","msg":"unauthorized"}')
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/origin").mock(
+        return_value=httpx.Response(401, text='{"secret_token":"cf-secret-xyz","msg":"unauthorized"}')
+    )
+    respx.get(f"{base}/attacks/layer3/summary/PROTOCOL").mock(
+        return_value=httpx.Response(401, text='{"secret_token":"cf-secret-xyz","msg":"unauthorized"}')
+    )
+
+    res_auth = await service.get_overview(date_range="7d")
+    assert res_auth.status == DataStatus.UNAVAILABLE
+    assert "cf-secret" not in (res_auth.warning or "")
+    assert "Upstream authentication failed (verify API token)" in (res_auth.warning or "")
+
+    status = service.get_status()
+    assert "cf-secret" not in (status.active_warning or "")
+
+    # 2. 429 Rate Limit with Retry-After header
+    respx.clear()
+    respx.get(f"{base}/attacks/layer3/timeseries").mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "45"}, text="Rate limited")
+    )
+    respx.get(f"{base}/attacks/layer7/timeseries").mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "45"}, text="Rate limited")
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/target").mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "45"}, text="Rate limited")
+    )
+    respx.get(f"{base}/attacks/layer3/top/locations/origin").mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "45"}, text="Rate limited")
+    )
+    respx.get(f"{base}/attacks/layer3/summary/PROTOCOL").mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "45"}, text="Rate limited")
+    )
+
+    res_rate = await service.get_overview(date_range="7d")
+    assert res_rate.status == DataStatus.UNAVAILABLE
+    assert "Upstream rate limit reached (retry after 45s)" in (res_rate.warning or "")
+
+
+@pytest.mark.asyncio
+async def test_radar_service_and_lifespan_client_cleanup(
+    mock_configured_settings: Settings,
+) -> None:
+    """Verify close() and close_radar_service() properly shut down active client HTTP connections."""
+    from app.services.radar_service import close_radar_service, get_radar_service
+
+    service = get_radar_service()
+    assert service is not None
+
+    # Get client internal instance
+    client = await service.client._get_client()
+    assert client.is_closed is False
+
+    # Close via close_radar_service
+    await close_radar_service()
+    assert client.is_closed is True

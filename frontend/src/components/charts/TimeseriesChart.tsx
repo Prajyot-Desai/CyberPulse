@@ -20,6 +20,42 @@ interface TimeseriesChartProps {
   observationWindow: string;
 }
 
+// Concise tick label tailored to the observation window
+export const formatXAxisTick = (timestamp: string, observationWindow: string): string => {
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return timestamp;
+  if (observationWindow === '24h' || observationWindow === '1d') {
+    return (
+      d.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'UTC',
+        hour12: false,
+      }) + ' UTC'
+    );
+  }
+  return d.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+};
+
+// Full unambiguous timestamp for tooltips (includes year, date, time, and UTC timezone)
+export const formatTooltipTimestamp = (timestamp: string): string => {
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return timestamp;
+  return d.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'UTC',
+    timeZoneName: 'short',
+  });
+};
+
 export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({
   layer3Data = [],
   layer7Data = [],
@@ -50,42 +86,6 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({
       (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
   }, [layer3Data, layer7Data, hasData]);
-
-  // Concise tick label tailored to the observation window
-  const formatXAxisTick = (timestamp: string) => {
-    const d = new Date(timestamp);
-    if (isNaN(d.getTime())) return timestamp;
-    if (observationWindow === '24h') {
-      return (
-        d.toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-          timeZone: 'UTC',
-          hour12: false,
-        }) + ' UTC'
-      );
-    }
-    return d.toLocaleDateString([], {
-      month: 'short',
-      day: 'numeric',
-      timeZone: 'UTC',
-    });
-  };
-
-  // Full unambiguous timestamp for tooltips (includes year, date, time, and UTC timezone)
-  const formatTooltipTimestamp = (timestamp: string) => {
-    const d = new Date(timestamp);
-    if (isNaN(d.getTime())) return timestamp;
-    return d.toLocaleString([], {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'UTC',
-      timeZoneName: 'short',
-    });
-  };
 
   // Calculate sensible tick interval to prevent label overlap across different windows
   const tickInterval = React.useMemo(() => {
@@ -131,7 +131,7 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.05)" />
               <XAxis
                 dataKey="timestamp"
-                tickFormatter={formatXAxisTick}
+                tickFormatter={(val) => formatXAxisTick(String(val), observationWindow)}
                 interval={tickInterval}
                 minTickGap={25}
                 stroke="var(--text-muted)"

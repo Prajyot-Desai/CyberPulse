@@ -9,6 +9,7 @@ from app.clients.cloudflare import (
     CloudflareClientError,
     CloudflareRadarClient,
     CloudflareRateLimitError,
+    CloudflareResponseError,
     CloudflareUpstreamError,
 )
 from app.core.cache import InMemoryTTLCache, cache as default_cache
@@ -24,6 +25,34 @@ from app.models.radar import (
     RawTopLocationItem,
     TimeseriesPoint,
 )
+
+
+def sanitize_upstream_error(err: Optional[Exception]) -> str:
+    """
+    Return a concise, actionable, and safe error message suitable for public display.
+    Never exposes raw response bodies, bearer tokens, internal URLs, or stack traces.
+    """
+    if err is None:
+        return "Unknown upstream error"
+
+    if isinstance(err, CloudflareAuthError):
+        return "Upstream authentication failed (verify API token)"
+    if isinstance(err, CloudflareRateLimitError):
+        retry_after = getattr(err, "retry_after", None)
+        if retry_after:
+            return f"Upstream rate limit reached (retry after {retry_after}s)"
+        return "Upstream rate limit reached"
+    if isinstance(err, CloudflareUpstreamError):
+        return "Upstream Cloudflare Radar service temporarily unavailable or timed out"
+    if isinstance(err, CloudflareResponseError):
+        return "Unexpected response format from upstream provider"
+    if isinstance(err, CloudflareClientError):
+        return "Upstream provider rejected query parameters"
+    if isinstance(err, (asyncio.TimeoutError, TimeoutError)):
+        return "Upstream request timed out"
+
+    # Fallback generic message
+    return "Upstream service temporarily unavailable"
 
 
 class RadarService:
@@ -248,10 +277,21 @@ class RadarService:
                 l3_res, l7_res, target_res, origin_res, protocol_res = results
 
                 # Check if critical requests succeeded or all failed
-                exceptions = [r for r in results if isinstance(r, Exception)]
-                if len(exceptions) == len(results):
-                    # All upstream requests failed
-                    raise exceptions[0]
+                dimension_map = [
+                    ("Layer 3 timeseries", l3_res),
+                    ("Layer 7 timeseries", l7_res),
+                    ("Top target locations", target_res),
+                    ("Top origin locations", origin_res),
+                    ("Attack protocols", protocol_res),
+                ]
+
+                failed_dimensions = [
+                    name for name, res in dimension_map if isinstance(res, Exception)
+                ]
+
+                if len(failed_dimensions) == len(results):
+                    # All upstream requests failed -> trigger fallback/unavailable handling
+                    raise next(res for _, res in dimension_map if isinstance(res, Exception))
 
                 # Normalize each dimension, gracefully ignoring partial failures
                 metrics = RadarMetrics(
@@ -283,6 +323,36 @@ class RadarService:
                 )
 
                 now = datetime.now(timezone.utc)
+
+                if failed_dimensions:
+                    # Partial upstream failure:
+                    # 1. Never silently label as fresh.
+                    # 2. Clearly mark with PARTIAL status.
+                    # 3. Preserve successful endpoints while missing series remain empty.
+                    # 4. Do not cache partial payload into fresh cache.
+                    first_err = next(
+                        res for _, res in dimension_map if isinstance(res, Exception)
+                    )
+                    sanitized_err = sanitize_upstream_error(first_err)
+                    warning_msg = (
+                        f"Partial telemetry available: upstream sync failed for "
+                        f"{', '.join(failed_dimensions)} ({sanitized_err})."
+                    )
+                    self.last_error = warning_msg
+                    logger.warning(
+                        f"Partial upstream failure for date_range={date_range}: {failed_dimensions}"
+                    )
+
+                    return RadarOverviewResponse(
+                        status=DataStatus.PARTIAL,
+                        observation_window=date_range,
+                        fetched_at=now,
+                        is_stale=False,
+                        metrics=metrics,
+                        warning=warning_msg,
+                    )
+
+                # All upstream calls succeeded
                 self.last_successful_sync = now
                 self.last_error = None
 
@@ -295,18 +365,22 @@ class RadarService:
                     warning=None,
                 )
 
-                # Store in cache
+                # Store complete success in cache with fresh TTL and max stale age
                 self.cache.set(
                     cache_key,
                     response,
                     ttl_seconds=self.settings.CACHE_TTL_SECONDS,
+                    max_stale_seconds=self.settings.CACHE_MAX_STALE_SECONDS,
                 )
                 return response
 
             except Exception as err:
-                error_msg = f"{type(err).__name__}: {str(err)}"
-                self.last_error = error_msg
-                logger.error(f"Failed to fetch fresh Cloudflare Radar overview: {error_msg}")
+                sanitized_err = sanitize_upstream_error(err)
+                self.last_error = sanitized_err
+                logger.error(
+                    f"Failed to fetch fresh Cloudflare Radar overview: "
+                    f"{type(err).__name__}: {sanitized_err}"
+                )
 
                 # 5. Stale cache fallback check
                 stale_val, is_stale, created_at = self.cache.get_with_status(cache_key)
@@ -319,7 +393,7 @@ class RadarService:
                         fetched_at=created_at or stale_val.fetched_at,
                         is_stale=True,
                         metrics=stale_val.metrics,
-                        warning=f"Serving cached data. Upstream sync failed: {str(err)}",
+                        warning=f"Serving cached data. Upstream sync failed: {sanitized_err}",
                     )
 
                 # 6. No cached data exists -> UNAVAILABLE
@@ -329,7 +403,7 @@ class RadarService:
                     fetched_at=None,
                     is_stale=False,
                     metrics=None,
-                    warning=f"Upstream Cloudflare Radar data unavailable: {str(err)}",
+                    warning=f"Upstream Cloudflare Radar data unavailable: {sanitized_err}",
                 )
 
     def get_status(self) -> RadarStatusResponse:
@@ -342,6 +416,11 @@ class RadarService:
             active_warning=self.last_error,
         )
 
+    async def close(self) -> None:
+        """Close associated client connections and resources."""
+        if self.client:
+            await self.client.close()
+
 
 _service_instance: Optional[RadarService] = None
 
@@ -352,3 +431,11 @@ def get_radar_service() -> RadarService:
     if _service_instance is None:
         _service_instance = RadarService()
     return _service_instance
+
+
+async def close_radar_service() -> None:
+    """Close the global singleton RadarService and its client if initialized."""
+    global _service_instance
+    if _service_instance is not None:
+        await _service_instance.close()
+        _service_instance = None

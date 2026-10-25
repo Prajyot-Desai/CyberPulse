@@ -68,6 +68,13 @@ export const Header: React.FC<HeaderProps> = ({
     if (dataStatus === 'unavailable') {
       return <Badge variant="error">UNAVAILABLE</Badge>;
     }
+    if (dataStatus === 'partial') {
+      return (
+        <Badge variant="warning" pulse>
+          PARTIAL RADAR
+        </Badge>
+      );
+    }
     if (dataStatus === 'fresh') {
       return (
         <Badge variant="success" pulse>

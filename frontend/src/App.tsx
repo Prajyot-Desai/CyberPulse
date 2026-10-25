@@ -4,6 +4,7 @@ import { NavTab } from './components/layout/Sidebar';
 import { useRadar } from './hooks/useRadar';
 import { StaleWarningBanner } from './components/dashboard/StaleWarningBanner';
 import { OfflineBanner } from './components/dashboard/OfflineBanner';
+import { ErrorBanner } from './components/dashboard/ErrorBanner';
 import { MetricCards } from './components/metrics/MetricCards';
 import { GlobePlaceholder } from './components/dashboard/GlobePlaceholder';
 import { TimeseriesChart } from './components/charts/TimeseriesChart';
@@ -25,6 +26,10 @@ export const App: React.FC = () => {
     isLoading,
     isRefreshing,
     isOffline,
+    error,
+    isUnavailable,
+    isUnconfigured,
+    isPartial,
     observationWindow,
     setObservationWindow,
     refetch,
@@ -81,16 +86,61 @@ export const App: React.FC = () => {
       onWindowChange={setObservationWindow}
       onRefresh={refetch}
     >
-      {/* 1. Offline Banner if backend cannot be reached */}
-      {isOffline && <OfflineBanner onRetry={refetch} isLoading={isRefreshing} />}
-
-      {/* 2. Stale Data Warning Banner */}
-      {!isOffline && isStale && (
+      {/* Banner Display Hierarchy: Offline > Active Error > Unavailable > Unconfigured > Partial > Stale */}
+      {isOffline ? (
+        <OfflineBanner onRetry={refetch} isLoading={isRefreshing} />
+      ) : error ? (
+        <ErrorBanner
+          id="api-error-alert"
+          variant="danger"
+          title="Telemetry Request Failed"
+          message={error}
+          hint="Click Retry Request to attempt retrieval again."
+          onRetry={refetch}
+          isLoading={isRefreshing}
+        />
+      ) : isUnavailable ? (
+        <ErrorBanner
+          id="api-error-alert"
+          variant="danger"
+          title="Telemetry Data Unavailable"
+          message={
+            overview?.warning ||
+            'Upstream Cloudflare Radar data is currently unavailable. Please try again shortly.'
+          }
+          hint="Click Retry Request to attempt retrieval again."
+          onRetry={refetch}
+          isLoading={isRefreshing}
+        />
+      ) : isUnconfigured ? (
+        <ErrorBanner
+          id="unconfigured-token-alert"
+          variant="warning"
+          title="Cloudflare API Token Unconfigured"
+          message="Live attack telemetry requires a configured Cloudflare Radar token. The dashboard is operating in standby mode."
+          hint="Add CLOUDFLARE_API_TOKEN to backend/.env and click Check Connection to sync live intelligence."
+          onRetry={refetch}
+          isLoading={isRefreshing}
+        />
+      ) : isPartial ? (
+        <ErrorBanner
+          id="partial-telemetry-alert"
+          variant="warning"
+          title="Partial Telemetry Available"
+          message={
+            overview?.warning ||
+            'Some upstream Cloudflare Radar dimensions failed to load. Remaining telemetry is displayed below.'
+          }
+          hint="Click Refresh to attempt syncing missing dimensions."
+          onRetry={refetch}
+          isLoading={isRefreshing}
+        />
+      ) : isStale ? (
         <StaleWarningBanner
           warningMessage={overview?.warning}
           fetchedAt={overview?.fetched_at}
         />
-      )}
+      ) : null}
 
       {/* TAB: OVERVIEW */}
       {activeTab === 'overview' && (

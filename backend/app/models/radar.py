@@ -17,6 +17,7 @@ class DataStatus(str, Enum):
     STALE = "stale"
     UNAVAILABLE = "unavailable"
     UNCONFIGURED = "unconfigured"
+    PARTIAL = "partial"
 
 
 # ------------------------------------------------------------------------------
@@ -176,7 +177,7 @@ class RadarMetrics(BaseModel):
 class RadarOverviewResponse(BaseModel):
     """Normalized response payload for /api/v1/radar/overview."""
 
-    status: DataStatus = Field(description="Data freshness status: fresh, stale, unavailable, or unconfigured")
+    status: DataStatus = Field(description="Data freshness status: fresh, stale, unavailable, unconfigured, or partial")
     data_source: str = Field(
         default="Cloudflare Radar API v4", description="Original data source"
     )

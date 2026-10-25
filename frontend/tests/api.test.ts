@@ -96,4 +96,55 @@ describe('apiService', () => {
 
     await expect(apiService.getOverview()).rejects.toThrow('Upstream gateway error');
   });
+
+  it('extracts structured validation error messages from FastAPI 422 array details', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      statusText: 'Unprocessable Entity',
+      json: async () => ({
+        detail: [
+          {
+            loc: ['query', 'dateRange'],
+            msg: "String should match pattern '^(1d|7d|14d|30d)$'",
+            type: 'string_pattern_mismatch',
+          },
+        ],
+      }),
+    } as Response);
+
+    await expect(apiService.getOverview('90d' as any)).rejects.toThrow(
+      "dateRange: String should match pattern '^(1d|7d|14d|30d)$'"
+    );
+  });
+
+  it('fails fast when caller signal is already aborted before fetch', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    await expect(apiService.getOverview('7d', controller.signal)).rejects.toMatchObject({
+      message: 'Request was cancelled.',
+      isOffline: true,
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('removes abort event listener from caller signal upon completion', async () => {
+    const controller = new AbortController();
+    const addListenerSpy = vi.spyOn(controller.signal, 'addEventListener');
+    const removeListenerSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'ok' }),
+    } as Response);
+
+    await apiService.checkHealth(controller.signal);
+
+    expect(addListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function), { once: true });
+    expect(removeListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
 });

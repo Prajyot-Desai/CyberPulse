@@ -166,8 +166,11 @@ class CloudflareRadarClient:
                     )
 
                 # 5. Other 4xx client errors
+                logger.warning(
+                    f"Unexpected client error from Cloudflare Radar (HTTP {response.status_code})"
+                )
                 raise CloudflareClientError(
-                    f"Unexpected client error from Cloudflare Radar (HTTP {response.status_code}): {response.text[:200]}"
+                    f"Upstream provider returned client error (HTTP {response.status_code})."
                 )
 
             except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError) as net_err:

@@ -72,3 +72,43 @@ async def test_cache_key_locks() -> None:
 
     assert lock1 is lock2
     assert lock1 is not lock3
+
+
+def test_bounded_stale_cache_expiration_with_controllable_clock() -> None:
+    """Verify fresh TTL and max stale age boundaries using a synthetic clock."""
+    current_time = 10000.0
+
+    def fake_clock() -> float:
+        return current_time
+
+    # Default TTL: 900s (15 min), Max stale: 86400s (24 hours)
+    cache = InMemoryTTLCache(
+        default_ttl_seconds=900,
+        max_stale_seconds=86400,
+        time_func=fake_clock,
+    )
+    cache.set("key_bounded", {"status": "ok"})
+
+    # 1. Immediate retrieval: Fresh
+    assert cache.get("key_bounded") == {"status": "ok"}
+    val, is_stale, created_at = cache.get_with_status("key_bounded")
+    assert val == {"status": "ok"}
+    assert is_stale is False
+    assert created_at is not None
+
+    # 2. Advance clock past fresh TTL (901 seconds), but well within 24 hours
+    current_time += 901.0
+    assert cache.get("key_bounded") is None  # Standard get rejects stale
+    val, is_stale, _ = cache.get_with_status("key_bounded")
+    assert val == {"status": "ok"}
+    assert is_stale is True  # Servable as stale fallback
+
+    # 3. Advance clock past maximum stale age (24 hours + 1 second from creation)
+    # Total elapsed from start = 86401.0 seconds
+    current_time = 10000.0 + 86401.0
+    val, is_stale, _ = cache.get_with_status("key_bounded")
+    assert val is None  # Bounded stale age rejects old entry
+    assert is_stale is False
+
+    # Eviction confirmed
+    assert cache.stats()["total_entries"] == 0

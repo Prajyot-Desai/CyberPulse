@@ -6,9 +6,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.health import router as root_health_router
 from app.api.v1.router import api_v1_router
-from app.clients.cloudflare import CloudflareRadarClient
 from app.core.config import get_settings
 from app.core.logging import logger, setup_logging
+from app.services.radar_service import close_radar_service
 
 
 @asynccontextmanager
@@ -26,9 +26,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     logger.info("Shutting down CyberPulse backend...")
-    # Clean up singleton client if initialized
-    default_client = CloudflareRadarClient(settings=settings)
-    await default_client.close()
+    # Clean up active singleton service and its HTTP client
+    await close_radar_service()
 
 
 def create_app() -> FastAPI:
